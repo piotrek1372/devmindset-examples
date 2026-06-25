@@ -17,7 +17,7 @@ mkdir -p "$OUT"
 case "$MODE" in
 io)
     echo "=> file I/O for PID $PID (^C to stop)"
-    # -y resolves fd numbers to file paths
+    # -y resolves fd numbers to actual file paths
     strace -e trace=openat,read,write,close,fstat -y -p "$PID" -o "$OUT/io.log"
     echo "=> log: $OUT/io.log"
     echo "=> top opened paths:"
@@ -28,13 +28,12 @@ net)
     # -y on connect shows TCP:[src->dst] detail
     strace -e trace=connect,bind,sendto,recvfrom -y -p "$PID" -o "$OUT/net.log"
     echo "=> log: $OUT/net.log"
-    echo "=> remote endpoints:"
     grep -oP 'sin_addr=inet_addr\("\K[^"]+' "$OUT/net.log" | sort -u
     ;;
 slow)
     THRESH="${3:-0.010}"
     echo "=> syscalls > ${THRESH}s on PID $PID (^C to stop)"
-    # -T appends time-in-syscall as <N.NNNNNN>
+    # -T appends time-in-syscall as <N.NNNNNN> at end of each line
     strace -T -p "$PID" 2>&1 | awk -v t="$THRESH" '
         match($0, /<([0-9]+\.[0-9]+)>$/, m) && m[1]+0 > t+0 {
             printf "SLOW [%ss] %s\n", m[1], $0
@@ -42,7 +41,7 @@ slow)
     ;;
 all)
     echo "=> full trace for PID $PID — high overhead (^C to stop)"
-    # -f follows children, -tt microsecond timestamps
+    # -f follows forks, -tt microsecond timestamps
     strace -f -tt -p "$PID" -o "$OUT/full.log"
     echo "=> log: $OUT/full.log"
     echo "=> syscall frequency:"

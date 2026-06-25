@@ -15,14 +15,14 @@ NF < 9 { next }
     ip     = $1
     status = $9
     bytes  = ($10 ~ /^[0-9]+$/) ? $10 + 0 : 0
-    method = substr($6, 2)  # strip leading quote: "GET -> GET
+    method = substr($6, 2)    # "GET => GET (strip leading quote)
     path   = $7
     total++
     total_bytes += bytes
     ip_count[ip]++
     status_count[status]++
     if (status+0 >= 400) errors++
-    split($4, ts, ":")      # [DD/Mon/YYYY:HH:MM:SS
+    split($4, ts, ":")        # [DD/Mon/YYYY:HH:MM:SS
     hour_count[ts[2]]++
 }
 

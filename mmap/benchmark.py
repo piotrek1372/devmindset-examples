@@ -3,9 +3,9 @@
 Benchmark: mmap vs read() for sequential and random file access.
 Article: https://devmindset.dev/en/mmap-when-memory-mapped-i-o-beats-read-and-write/
 
-mmap delegates page-cache management to the kernel. For random access,
-this eliminates seek() syscalls -- each slice access is a virtual memory
-lookup + demand paging, bypassing the stdio layer entirely.
+mmap delegates page-cache management to the kernel. For random access this
+eliminates seek() syscalls — each slice access is a virtual-memory lookup
++ demand paging, bypassing the stdio layer entirely.
 
 Requirements: Python 3.10+, Linux
 Usage: python3 benchmark.py [--size-mb 128] [--accesses 10000]
@@ -93,14 +93,14 @@ def main() -> None:
         results: dict[str, tuple[float, float]] = {}
         runs: list[tuple[str, object]] = [
             ("read() sequential", lambda f: bench_read_sequential(f)),
-            ("mmap  sequential", lambda f: bench_mmap_sequential(f)),
-            ("read() random", lambda f: bench_read_random(f, args.accesses)),
-            ("mmap  random", lambda f: bench_mmap_random(f, args.accesses)),
+            ("mmap  sequential ", lambda f: bench_mmap_sequential(f)),
+            ("read() random    ", lambda f: bench_read_random(f, args.accesses)),
+            ("mmap  random     ", lambda f: bench_mmap_random(f, args.accesses)),
         ]
         for label, fn in runs:
             print()
-            print(f"=== {label} ===")
-            results[label] = run(fn, p, args.iterations, label)
+            print(f"=== {label.strip()} ===")
+            results[label] = run(fn, p, args.iterations, label.strip())
 
         print()
         print("=== summary ===")
