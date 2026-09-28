@@ -33,23 +33,24 @@ def demo_cow() -> None:
         os._exit(0)
 
     time.sleep(0.05)
-    # Parent page is unaffected — child received a separate physical copy
-    print(f"[parent {os.getpid()}] buf[0]={buf[0]:#x}  (unchanged — separate physical page)")
+    # The parent value is unchanged; this output alone does not measure page sharing.
+    print(f"[parent {os.getpid()}] buf[0]={buf[0]:#x}  (unchanged after child write)")
     os.waitpid(pid, 0)
 
 
 def demo_zombie() -> None:
     """
-    A child that exits before the parent calls waitpid() becomes a zombie:
-    the process table entry stays until the parent reaps it.
-    Always call waitpid() or install a SIGCHLD handler.
+    A child that exits before the parent calls waitpid() can become a zombie:
+    its process table entry stays until it is reaped, unless SIGCHLD policy
+    causes the kernel to discard the status. The pause below does not verify
+    the child's actual process state; waitpid() reaps it in this demo.
     """
     pid = os.fork()
     if pid == 0:
         print(f"[child  {os.getpid()}] exiting — zombie until parent reaps")
         os._exit(42)  # use os._exit to skip Python atexit handlers
 
-    time.sleep(0.3)   # child is zombie during this window
+    time.sleep(0.3)   # allow the child to exit before reaping; not a state check
     print(f"[parent {os.getpid()}] reaping child {pid}...")
     _, status = os.waitpid(pid, 0)
     print(f"[parent {os.getpid()}] reaped — exit code: {os.WEXITSTATUS(status)}")
@@ -59,15 +60,21 @@ def demo_exec() -> None:
     """
     fork() + exec() is the canonical Unix process creation pattern.
     The child replaces its entire address space via execvp().
-    Nothing after execvp() in the child ever runs.
+    On success, nothing after execvp() in the child runs; failure raises OSError.
     """
     pid = os.fork()
     if pid == 0:
-        os.execvp("uname", ["uname", "-r"])
-        os._exit(1)   # unreachable if execvp succeeds
+        try:
+            os.execvp("uname", ["uname", "-r"])
+        except OSError as exc:
+            print(f"[child  {os.getpid()}] execvp failed: {exc}", file=sys.stderr, flush=True)
+            os._exit(127)
 
     _, status = os.waitpid(pid, 0)
-    print(f"[parent {os.getpid()}] child exited with {os.WEXITSTATUS(status)}")
+    code = os.waitstatus_to_exitcode(status)
+    print(f"[parent {os.getpid()}] child exit status: {code}")
+    if code != 0:
+        raise SystemExit(1)
 
 
 def main() -> None:
