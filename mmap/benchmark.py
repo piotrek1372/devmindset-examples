@@ -9,6 +9,15 @@ eliminates seek() syscalls — each slice access is a virtual-memory lookup
 
 Requirements: Python 3.10+, Linux
 Usage: python3 benchmark.py [--size-mb 128] [--accesses 10000]
+
+Random workloads share offsets generated once with --seed (default: 0).
+An untimed sequential read warms the OS page cache before measurement;
+this is not a cold-cache disk benchmark. Files larger than available RAM
+may not stay cached. Each round reverses the previous round's order to
+reduce order bias; use an even --iterations value to balance first/last
+positions. Cache state, memory pressure and timings remain OS-dependent.
+Sequential variants also differ in allocation: read() uses 64 KiB chunks,
+whereas mmap.read() copies the whole file. Interpret those results accordingly.
 """
 
 from __future__ import annotations
@@ -19,6 +28,7 @@ import os
 import random
 import tempfile
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 
@@ -48,9 +58,7 @@ def bench_mmap_sequential(path: Path) -> float:
     return time.perf_counter() - t
 
 
-def bench_read_random(path: Path, n: int) -> float:
-    size = path.stat().st_size
-    offsets = [random.randrange(0, size - 4096) for _ in range(n)]
+def bench_read_random(path: Path, offsets: Sequence[int]) -> float:
     t = time.perf_counter()
     with path.open("rb") as f:
         for off in offsets:
@@ -59,9 +67,7 @@ def bench_read_random(path: Path, n: int) -> float:
     return time.perf_counter() - t
 
 
-def bench_mmap_random(path: Path, n: int) -> float:
-    size = path.stat().st_size
-    offsets = [random.randrange(0, size - 4096) for _ in range(n)]
+def bench_mmap_random(path: Path, offsets: Sequence[int]) -> float:
     t = time.perf_counter()
     with path.open("rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
         for off in offsets:
@@ -69,20 +75,19 @@ def bench_mmap_random(path: Path, n: int) -> float:
     return time.perf_counter() - t
 
 
-def run(fn, path: Path, iters: int, label: str) -> tuple[float, float]:
-    times = []
-    for i in range(iters):
-        t = fn(path)
-        times.append(t)
-        print(f"  [{label}] run {i+1}: {t:.4f}s")
-    return sum(times) / iters, min(times)
+def positive_int(value: str) -> int:
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return number
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--size-mb", type=int, default=128)
-    ap.add_argument("--accesses", type=int, default=10_000)
-    ap.add_argument("--iterations", type=int, default=3)
+    ap.add_argument("--size-mb", type=positive_int, default=128)
+    ap.add_argument("--accesses", type=positive_int, default=10_000)
+    ap.add_argument("--iterations", type=positive_int, default=3)
+    ap.add_argument("--seed", type=int, default=0, help="random-offset seed (default: 0)")
     args = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as d:
@@ -90,17 +95,31 @@ def main() -> None:
         print(f"Creating {args.size_mb} MB test file...")
         create_test_file(p, args.size_mb)
 
+        rng = random.Random(args.seed)
+        size = p.stat().st_size
+        offsets = tuple(rng.randrange(size - 4096 + 1)
+                        for _ in range(args.accesses))
+        print(f"Seed: {args.seed}; shared random offsets: {len(offsets)}")
+        print("Untimed warm-up; OS page cache is not cleared between runs.")
+        print("Alternating order; use even --iterations for balanced positions.")
+        bench_read_sequential(p)
+
         results: dict[str, tuple[float, float]] = {}
         runs: list[tuple[str, object]] = [
             ("read() sequential", lambda f: bench_read_sequential(f)),
             ("mmap  sequential ", lambda f: bench_mmap_sequential(f)),
-            ("read() random    ", lambda f: bench_read_random(f, args.accesses)),
-            ("mmap  random     ", lambda f: bench_mmap_random(f, args.accesses)),
+            ("read() random    ", lambda f: bench_read_random(f, offsets)),
+            ("mmap  random     ", lambda f: bench_mmap_random(f, offsets)),
         ]
-        for label, fn in runs:
-            print()
-            print(f"=== {label.strip()} ===")
-            results[label] = run(fn, p, args.iterations, label.strip())
+        times = {label: [] for label, _ in runs}
+        for i in range(args.iterations):
+            print(f"\n=== round {i+1} ===")
+            for label, fn in (runs if i % 2 == 0 else runs[::-1]):
+                t = fn(p)
+                times[label].append(t)
+                print(f"  [{label.strip()}] run {i+1}: {t:.4f}s")
+        for label, samples in times.items():
+            results[label] = sum(samples) / len(samples), min(samples)
 
         print()
         print("=== summary ===")
